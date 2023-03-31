@@ -39,8 +39,8 @@ use sp_consensus_grandpa::{
 	AuthorityList, EquivocationProof, GrandpaApi, OpaqueKeyOwnershipProof, GRANDPA_ENGINE_ID,
 };
 use sp_core::H256;
-use sp_keyring::Ed25519Keyring;
-use sp_keystore::{testing::KeyStore as TestKeyStore, SyncCryptoStore, SyncCryptoStorePtr};
+use sp_keyring::Sr25519Keyring;
+use sp_keystore::{testing::MemoryKeystore, Keystore, KeystorePtr};
 use sp_runtime::{
 	codec::Encode,
 	generic::{BlockId, DigestItem},
@@ -276,15 +276,16 @@ impl AssertBestBlock {
 
 const TEST_GOSSIP_DURATION: Duration = Duration::from_millis(500);
 
-fn make_ids(keys: &[Ed25519Keyring]) -> AuthorityList {
+fn make_ids(keys: &[Sr25519Keyring]) -> AuthorityList {
 	keys.iter().map(|&key| key.public().into()).map(|id| (id, 1)).collect()
 }
 
-fn create_keystore(authority: Ed25519Keyring) -> SyncCryptoStorePtr {
-	let keystore = Arc::new(TestKeyStore::new());
-	SyncCryptoStore::ed25519_generate_new(&*keystore, GRANDPA, Some(&authority.to_seed()))
-		.expect("Creates authority key");
+fn create_keystore(authority: Sr25519Keyring) -> KeystorePtr {
+	let keystore = MemoryKeystore::new();
 	keystore
+		.sr25519_generate_new(GRANDPA, Some(&authority.to_seed()))
+		.expect("Creates authority key");
+	keystore.into()
 }
 
 async fn run_until_complete(future: impl Future + Unpin, net: &Arc<Mutex<GrandpaTestNet>>) {
@@ -298,7 +299,7 @@ async fn run_until_complete(future: impl Future + Unpin, net: &Arc<Mutex<Grandpa
 // Spawns grandpa voters. Returns a future to spawn on the runtime.
 fn initialize_grandpa(
 	net: &mut GrandpaTestNet,
-	peers: &[Ed25519Keyring],
+	peers: &[Sr25519Keyring],
 ) -> impl Future<Output = ()> {
 	let voters = stream::FuturesUnordered::new();
 
@@ -349,7 +350,7 @@ fn initialize_grandpa(
 async fn run_to_completion_with<F>(
 	blocks: u64,
 	net: Arc<Mutex<GrandpaTestNet>>,
-	peers: &[Ed25519Keyring],
+	peers: &[Sr25519Keyring],
 	with: F,
 ) -> u64
 where
@@ -393,7 +394,7 @@ where
 async fn run_to_completion(
 	blocks: u64,
 	net: Arc<Mutex<GrandpaTestNet>>,
-	peers: &[Ed25519Keyring],
+	peers: &[Sr25519Keyring],
 ) -> u64 {
 	run_to_completion_with(blocks, net, peers, |_| None).await
 }
@@ -419,7 +420,7 @@ fn add_forced_change(
 #[tokio::test]
 async fn finalize_3_voters_no_observers() {
 	sp_tracing::try_init_simple();
-	let peers = &[Ed25519Keyring::Alice, Ed25519Keyring::Bob, Ed25519Keyring::Charlie];
+	let peers = &[Sr25519Keyring::Alice, Sr25519Keyring::Bob, Sr25519Keyring::Charlie];
 	let voters = make_ids(peers);
 
 	let mut net = GrandpaTestNet::new(TestApi::new(voters), 3, 0);
@@ -445,7 +446,7 @@ async fn finalize_3_voters_no_observers() {
 
 #[tokio::test]
 async fn finalize_3_voters_1_full_observer() {
-	let peers = &[Ed25519Keyring::Alice, Ed25519Keyring::Bob, Ed25519Keyring::Charlie];
+	let peers = &[Sr25519Keyring::Alice, Sr25519Keyring::Bob, Sr25519Keyring::Charlie];
 	let voters = make_ids(peers);
 
 	let mut net = GrandpaTestNet::new(TestApi::new(voters), 3, 1);
@@ -513,13 +514,13 @@ async fn finalize_3_voters_1_full_observer() {
 #[tokio::test]
 async fn transition_3_voters_twice_1_full_observer() {
 	sp_tracing::try_init_simple();
-	let peers_a = &[Ed25519Keyring::Alice, Ed25519Keyring::Bob, Ed25519Keyring::Charlie];
+	let peers_a = &[Sr25519Keyring::Alice, Sr25519Keyring::Bob, Sr25519Keyring::Charlie];
 
-	let peers_b = &[Ed25519Keyring::Dave, Ed25519Keyring::Eve, Ed25519Keyring::Ferdie];
+	let peers_b = &[Sr25519Keyring::Dave, Sr25519Keyring::Eve, Sr25519Keyring::Ferdie];
 
-	let peers_c = &[Ed25519Keyring::Alice, Ed25519Keyring::Eve, Ed25519Keyring::Two];
+	let peers_c = &[Sr25519Keyring::Alice, Sr25519Keyring::Eve, Sr25519Keyring::Two];
 
-	let observer = &[Ed25519Keyring::One];
+	let observer = &[Sr25519Keyring::One];
 
 	let all_peers = peers_a
 		.iter()
@@ -670,7 +671,7 @@ async fn transition_3_voters_twice_1_full_observer() {
 
 #[tokio::test]
 async fn justification_is_generated_periodically() {
-	let peers = &[Ed25519Keyring::Alice, Ed25519Keyring::Bob, Ed25519Keyring::Charlie];
+	let peers = &[Sr25519Keyring::Alice, Sr25519Keyring::Bob, Sr25519Keyring::Charlie];
 	let voters = make_ids(peers);
 
 	let mut net = GrandpaTestNet::new(TestApi::new(voters), 3, 0);
@@ -692,8 +693,8 @@ async fn justification_is_generated_periodically() {
 
 #[tokio::test]
 async fn sync_justifications_on_change_blocks() {
-	let peers_a = &[Ed25519Keyring::Alice, Ed25519Keyring::Bob, Ed25519Keyring::Charlie];
-	let peers_b = &[Ed25519Keyring::Alice, Ed25519Keyring::Bob];
+	let peers_a = &[Sr25519Keyring::Alice, Sr25519Keyring::Bob, Sr25519Keyring::Charlie];
+	let peers_b = &[Sr25519Keyring::Alice, Sr25519Keyring::Bob];
 	let voters = make_ids(peers_b);
 
 	// 4 peers, 3 of them are authorities and participate in grandpa
@@ -752,17 +753,17 @@ async fn sync_justifications_on_change_blocks() {
 async fn finalizes_multiple_pending_changes_in_order() {
 	sp_tracing::try_init_simple();
 
-	let peers_a = &[Ed25519Keyring::Alice, Ed25519Keyring::Bob, Ed25519Keyring::Charlie];
-	let peers_b = &[Ed25519Keyring::Dave, Ed25519Keyring::Eve, Ed25519Keyring::Ferdie];
-	let peers_c = &[Ed25519Keyring::Dave, Ed25519Keyring::Alice, Ed25519Keyring::Bob];
+	let peers_a = &[Sr25519Keyring::Alice, Sr25519Keyring::Bob, Sr25519Keyring::Charlie];
+	let peers_b = &[Sr25519Keyring::Dave, Sr25519Keyring::Eve, Sr25519Keyring::Ferdie];
+	let peers_c = &[Sr25519Keyring::Dave, Sr25519Keyring::Alice, Sr25519Keyring::Bob];
 
 	let all_peers = &[
-		Ed25519Keyring::Alice,
-		Ed25519Keyring::Bob,
-		Ed25519Keyring::Charlie,
-		Ed25519Keyring::Dave,
-		Ed25519Keyring::Eve,
-		Ed25519Keyring::Ferdie,
+		Sr25519Keyring::Alice,
+		Sr25519Keyring::Bob,
+		Sr25519Keyring::Charlie,
+		Sr25519Keyring::Dave,
+		Sr25519Keyring::Eve,
+		Sr25519Keyring::Ferdie,
 	];
 	let genesis_voters = make_ids(peers_a);
 
@@ -818,13 +819,13 @@ async fn force_change_to_new_set() {
 	sp_tracing::try_init_simple();
 	// two of these guys are offline.
 	let genesis_authorities = &[
-		Ed25519Keyring::Alice,
-		Ed25519Keyring::Bob,
-		Ed25519Keyring::Charlie,
-		Ed25519Keyring::One,
-		Ed25519Keyring::Two,
+		Sr25519Keyring::Alice,
+		Sr25519Keyring::Bob,
+		Sr25519Keyring::Charlie,
+		Sr25519Keyring::One,
+		Sr25519Keyring::Two,
 	];
-	let peers_a = &[Ed25519Keyring::Alice, Ed25519Keyring::Bob, Ed25519Keyring::Charlie];
+	let peers_a = &[Sr25519Keyring::Alice, Sr25519Keyring::Bob, Sr25519Keyring::Charlie];
 	let api = TestApi::new(make_ids(genesis_authorities));
 
 	let voters = make_ids(peers_a);
@@ -874,8 +875,8 @@ async fn force_change_to_new_set() {
 
 #[tokio::test]
 async fn allows_reimporting_change_blocks() {
-	let peers_a = &[Ed25519Keyring::Alice, Ed25519Keyring::Bob, Ed25519Keyring::Charlie];
-	let peers_b = &[Ed25519Keyring::Alice, Ed25519Keyring::Bob];
+	let peers_a = &[Sr25519Keyring::Alice, Sr25519Keyring::Bob, Sr25519Keyring::Charlie];
+	let peers_b = &[Sr25519Keyring::Alice, Sr25519Keyring::Bob];
 	let voters = make_ids(peers_a);
 	let api = TestApi::new(voters);
 	let mut net = GrandpaTestNet::new(api.clone(), 3, 0);
@@ -918,8 +919,8 @@ async fn allows_reimporting_change_blocks() {
 
 #[tokio::test]
 async fn test_bad_justification() {
-	let peers_a = &[Ed25519Keyring::Alice, Ed25519Keyring::Bob, Ed25519Keyring::Charlie];
-	let peers_b = &[Ed25519Keyring::Alice, Ed25519Keyring::Bob];
+	let peers_a = &[Sr25519Keyring::Alice, Sr25519Keyring::Bob, Sr25519Keyring::Charlie];
+	let peers_b = &[Sr25519Keyring::Alice, Sr25519Keyring::Bob];
 	let voters = make_ids(peers_a);
 	let api = TestApi::new(voters);
 	let mut net = GrandpaTestNet::new(api.clone(), 3, 0);
@@ -971,7 +972,7 @@ async fn voter_persists_its_votes() {
 
 	// we have two authorities but we'll only be running the voter for alice
 	// we are going to be listening for the prevotes it casts
-	let peers = &[Ed25519Keyring::Alice, Ed25519Keyring::Bob];
+	let peers = &[Sr25519Keyring::Alice, Sr25519Keyring::Bob];
 	let voters = make_ids(peers);
 
 	// alice has a chain with 20 blocks
@@ -1047,7 +1048,7 @@ async fn voter_persists_its_votes() {
 	});
 
 	fn alice_voter2(
-		peers: &[Ed25519Keyring],
+		peers: &[Sr25519Keyring],
 		net: Arc<Mutex<GrandpaTestNet>>,
 	) -> impl Future<Output = ()> + Send {
 		let keystore = create_keystore(peers[0]);
@@ -1223,7 +1224,7 @@ async fn voter_persists_its_votes() {
 #[tokio::test]
 async fn finalize_3_voters_1_light_observer() {
 	sp_tracing::try_init_simple();
-	let authorities = &[Ed25519Keyring::Alice, Ed25519Keyring::Bob, Ed25519Keyring::Charlie];
+	let authorities = &[Sr25519Keyring::Alice, Sr25519Keyring::Bob, Sr25519Keyring::Charlie];
 	let voters = make_ids(authorities);
 
 	let mut net = GrandpaTestNet::new(TestApi::new(voters), 3, 1);
@@ -1262,7 +1263,7 @@ async fn finalize_3_voters_1_light_observer() {
 async fn voter_catches_up_to_latest_round_when_behind() {
 	sp_tracing::try_init_simple();
 
-	let peers = &[Ed25519Keyring::Alice, Ed25519Keyring::Bob];
+	let peers = &[Sr25519Keyring::Alice, Sr25519Keyring::Bob];
 	let voters = make_ids(peers);
 
 	let net = GrandpaTestNet::new(TestApi::new(voters), 2, 0);
@@ -1376,7 +1377,7 @@ type TestEnvironment<N, S, SC, VR> =
 
 fn test_environment_with_select_chain<N, S, VR, SC>(
 	link: &TestLinkHalf,
-	keystore: Option<SyncCryptoStorePtr>,
+	keystore: Option<KeystorePtr>,
 	network_service: N,
 	sync_service: S,
 	select_chain: SC,
@@ -1428,7 +1429,7 @@ where
 
 fn test_environment<N, S, VR>(
 	link: &TestLinkHalf,
-	keystore: Option<SyncCryptoStorePtr>,
+	keystore: Option<KeystorePtr>,
 	network_service: N,
 	sync_service: S,
 	voting_rule: VR,
@@ -1452,7 +1453,7 @@ where
 async fn grandpa_environment_respects_voting_rules() {
 	use finality_grandpa::voter::Environment;
 
-	let peers = &[Ed25519Keyring::Alice];
+	let peers = &[Sr25519Keyring::Alice];
 	let voters = make_ids(peers);
 
 	let mut net = GrandpaTestNet::new(TestApi::new(voters), 1, 0);
@@ -1570,7 +1571,7 @@ async fn grandpa_environment_passes_actual_best_block_to_voting_rules() {
 	// best block to the voting rules
 	use finality_grandpa::voter::Environment;
 
-	let peers = &[Ed25519Keyring::Alice];
+	let peers = &[Sr25519Keyring::Alice];
 	let voters = make_ids(peers);
 
 	let mut net = GrandpaTestNet::new(TestApi::new(voters), 1, 0);
@@ -1630,7 +1631,7 @@ async fn grandpa_environment_passes_actual_best_block_to_voting_rules() {
 async fn grandpa_environment_checks_if_best_block_is_descendent_of_finality_target() {
 	use finality_grandpa::voter::Environment;
 
-	let peers = &[Ed25519Keyring::Alice];
+	let peers = &[Sr25519Keyring::Alice];
 	let voters = make_ids(peers);
 
 	let mut net = GrandpaTestNet::new(TestApi::new(voters), 1, 0);
@@ -1742,7 +1743,7 @@ async fn grandpa_environment_checks_if_best_block_is_descendent_of_finality_targ
 async fn grandpa_environment_never_overwrites_round_voter_state() {
 	use finality_grandpa::voter::Environment;
 
-	let peers = &[Ed25519Keyring::Alice];
+	let peers = &[Sr25519Keyring::Alice];
 	let voters = make_ids(peers);
 
 	let mut net = GrandpaTestNet::new(TestApi::new(voters), 1, 0);
@@ -1877,7 +1878,7 @@ async fn imports_justification_for_regular_blocks_on_import() {
 	// NOTE: this is a regression test since initially we would only import
 	// justifications for authority change blocks, and would discard any
 	// existing justification otherwise.
-	let peers = &[Ed25519Keyring::Alice];
+	let peers = &[Sr25519Keyring::Alice];
 	let voters = make_ids(peers);
 	let api = TestApi::new(voters);
 	let mut net = GrandpaTestNet::new(api.clone(), 1, 0);
@@ -1947,7 +1948,7 @@ async fn imports_justification_for_regular_blocks_on_import() {
 async fn grandpa_environment_doesnt_send_equivocation_reports_for_itself() {
 	use finality_grandpa::voter::Environment;
 
-	let alice = Ed25519Keyring::Alice;
+	let alice = Sr25519Keyring::Alice;
 	let voters = make_ids(&[alice]);
 
 	let environment = {
@@ -1994,7 +1995,7 @@ async fn grandpa_environment_doesnt_send_equivocation_reports_for_itself() {
 async fn revert_prunes_authority_changes() {
 	sp_tracing::try_init_simple();
 
-	let peers = &[Ed25519Keyring::Alice, Ed25519Keyring::Bob, Ed25519Keyring::Charlie];
+	let peers = &[Sr25519Keyring::Alice, Sr25519Keyring::Bob, Sr25519Keyring::Charlie];
 
 	type TestBlockBuilder<'a> =
 		BlockBuilder<'a, Block, PeersFullClient, substrate_test_runtime_client::Backend>;
